@@ -20,7 +20,9 @@
  *
  * GET-параметры (как в Kuma-шлюзе):
  * - chat_id, user_id, room_id — подставляются, если в правиле пустые получатели (telegram / vk / matrix)
- * - sender — опционально: grafana | kuma (нижний регистр). Пусто или отсутствует — «общий» клиент
+ * - sender — опционально: grafana | kuma | market | market/notification (нижний регистр). Пусто или отсутствует — «общий» клиент
+ *   market и market/notification — вебхук Яндекс Маркета (POST /notification): php://input в каналы одним куском без разбора,
+ *   ответ всегда JSON Response { version, name, time } (см. Partner API push sendNotification).
  *   (например Directus без query). В правиле ключ senders (массив строк) дополнительно ограничивает,
  *   для каких sender срабатывает правило; без senders или senders: [] — без ограничения.
  *
@@ -85,12 +87,14 @@ if ($request_sender !== '') {
     logMessage('GET sender=' . $request_sender);
 }
 
-$contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
-$data = parseIncomingPayload($raw_input, $contentType);
-$data = removeBackslashes($data);
-
 $telegram_parse_mode = null;
-if ($request_sender === 'grafana') {
+if (isMarketNotificationSender($request_sender)) {
+    $bodyText = $raw_input;
+    if ($bodyText !== '') {
+        $bodyText = truncateMessageUniversal($bodyText);
+    }
+    $channelMessages = ['telegram' => $bodyText, 'vk' => $bodyText, 'matrix' => $bodyText];
+} elseif ($request_sender === 'grafana') {
     $legacy = decodeLegacyJsonPayload($raw_input);
     $legacy = removeBackslashes($legacy);
     $formatted = formatGrafanaMessage($legacy);
@@ -101,6 +105,9 @@ if ($request_sender === 'grafana') {
     $formatted = formatKumaMessage($legacy);
     $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted];
 } else {
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+    $data = parseIncomingPayload($raw_input, $contentType);
+    $data = removeBackslashes($data);
     $channelMessages = buildChannelMessages($data, $raw_input);
     if (!empty($data['telegram_parse_mode']) && is_string($data['telegram_parse_mode'])) {
         $telegram_parse_mode = $data['telegram_parse_mode'];
@@ -204,6 +211,15 @@ foreach ($rules as $rule_name => $rule) {
             }
         }
     }
+}
+
+if (isMarketNotificationSender($request_sender)) {
+    if (!$sent_any) {
+        logMessage('Market notification: no matching rules or all channel sends failed.');
+    } else {
+        logMessage('Market notification: dispatched to channels.');
+    }
+    emitMarketNotificationApiResponse(200);
 }
 
 if (!$sent_any) {
@@ -485,9 +501,48 @@ function truncateMessageUniversal(string $message): string {
     return $message;
 }
 
+/** Допустимые GET sender для вебхука Яндекс Маркета (Partner API POST /notification). */
+function marketNotificationSenderIds(): array {
+    return ['market', 'market/notification'];
+}
+
+function isMarketNotificationSender(string $request_sender): bool {
+    $needle = strtolower(trim($request_sender));
+    return $needle !== '' && in_array($needle, marketNotificationSenderIds(), true);
+}
+
+/** Текущее UTC-время для поля time в Response (всегда «сейчас», не из тела запроса). */
+function marketNotificationResponseTime(): string {
+    return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');
+}
+
+/**
+ * Ответ Partner API push sendNotification: 200 + Response или 4xx/5xx + error.
+ */
+function emitMarketNotificationApiResponse(int $http_code, ?string $error_type = null, ?string $error_message = null): void {
+    header('Content-Type: application/json; charset=utf-8');
+    http_response_code($http_code);
+    if ($error_type !== null) {
+        $payload = [
+            'error' => [
+                'type' => $error_type,
+                'message' => $error_message ?? '',
+            ],
+        ];
+    } else {
+        $payload = [
+            'version' => '1.0.0',
+            'name' => 'all-notifications',
+            'time' => marketNotificationResponseTime(),
+        ];
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 /**
  * Если в правиле задан непустой senders — срабатывает только при GET sender из этого списка.
- * Значения сравниваются в нижнем регистре (grafana, kuma). Пустой sender — запрос без фильтра в URL.
+ * Значения сравниваются в нижнем регистре (grafana, kuma, market, market/notification). Пустой sender — запрос без фильтра в URL.
  */
 function ruleMatchesSenders(array $rule, string $request_sender): bool {
     if (!isset($rule['senders']) || !is_array($rule['senders'])) {
