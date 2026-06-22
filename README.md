@@ -1,109 +1,194 @@
 # all-notifications
 
-PHP-шлюзы для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK** и **Matrix** по настраиваемым правилам (каналы, получатели, расписание). Проект не привязан к конкретному фреймворку: скрипты выкладываются на сервер с PHP, cURL и доступом к внешним API.
+PHP-шлюз для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK** и **Matrix** по настраиваемым правилам (каналы, получатели, расписание). Сообщения, пришедшие вне окна `schedule`, не теряются: попадают в очередь MySQL и доставляются, когда расписание снова разрешает отправку.
+
+Проект не привязан к фреймворку: PHP 8+, cURL, PDO (MySQL/MariaDB), доступ к внешним API.
 
 ## Состав репозитория
 
 | Файл | Назначение |
 |------|------------|
-| `send.php` | Основной универсальный шлюз: POST с JSON/form/plain, раздельные тексты для Telegram, VK и Matrix, опциональный `parse_mode` только для Telegram. Настройки и правила читает из `config.php`. |
-| `config.php` | Возвращает массив с ключами `log_file`, `telegram_config`, `vk_config`, `matrix_config`, `rules`. Должен лежать рядом с `send.php` и быть читаемым процессом веб-сервера. |
-| `config.example.php` | Шаблон без секретов: скопируйте в `config.php` и заполните. |
-| `grafana-notifications.php` | Отдельный endpoint под типичный JSON вебхука Grafana (`formatMessage`). Встроенные `$rules` и токены в файле (наследие). |
-| `kuma-notifications.php` | Отдельный endpoint под JSON Uptime Kuma (`formatKumaMessage`). Встроенные `$rules` и токены в файле (наследие). |
-
-Интеграция с **Directus** (хук, `NOTIFICATION_ENDPOINT`) живёт в отдельном репозитории `directus-custom-notifications` и шлёт POST на **`send.php`** без `sender` (универсальное тело). Для **Grafana** в URL контакт-поинта укажите `?sender=grafana` (и при необходимости `?rules=...`), для **Uptime Kuma** — `?sender=kuma`, чтобы текст собирался как в legacy-скриптах.
+| `send.php` | HTTP-шлюз: приём POST, разбор тела, применение правил, немедленная отправка или постановка в очередь. |
+| `send_functions.php` | Вспомогательные функции отправки и форматирования (подключается из `send.php` и `cron.php`). |
+| `queue.php` | Работа с очередью в БД: постановка, доставка, очистка просроченных записей. |
+| `cron.php` | CLI-воркер очереди: удаляет записи старше 7 дней, отправляет накопившееся. |
+| `cron.sh` | Обёртка для cron: `php cron.php`. |
+| `schema.sql` | DDL таблицы `notification_queue` для MySQL/MariaDB. |
+| `config.php` | Рабочая конфигурация (не коммитится). |
+| `config.example.php` | Шаблон конфигурации без секретов. |
 
 ## Развёртывание
 
-1. Скопируйте каталог или отдельные `.php` на сервер (например под управлением nginx + php-fpm).
-2. `cp config.example.php config.php` и отредактируйте `config.php`: токены, прокси, путь к логу, массив `rules`.
-3. Убедитесь, что пользователь php-fpm может писать в файл лога из `log_file`.
-4. В вебхуках указывайте URL вида `https://ваш-домен/.../send.php` (при необходимости с query: `?rules=main`, `?sender=grafana` или `kuma`, `?chat_id=...`, `?user_id=...`, `?room_id=!xxx:server` — см. комментарии в начале `send.php` и `config.example.php`).
+1. Скопируйте каталог на сервер (nginx + php-fpm или аналог).
+2. `cp config.example.php config.php` — заполните токены, `db_config`, правила `rules`.
+3. Создайте БД и таблицу очереди:
 
-Рекомендуется не отдавать `config.php` как статику из document root без запрета в конфиге веб-сервера, либо вынести конфиг за пределы публичного каталога и подключать по абсолютному пути (потребуется небольшая правка `send.php`).
+```bash
+mysql -u root -p -e "CREATE DATABASE notifications CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -p notifications < schema.sql
+```
+
+4. Убедитесь, что пользователь php-fpm может писать в `log_file` и подключаться к MySQL.
+5. Добавьте cron (каждую минуту):
+
+```cron
+* * * * * /path/to/all-notifications/cron.sh >> /var/log/notifications-cron.log 2>&1
+```
+
+6. В вебхуках укажите URL вида `https://ваш-домен/.../send.php` (см. разделы ниже про query-параметры).
+
+Рекомендуется не отдавать `config.php` как статику из document root (запрет в конфиге веб-сервера).
+
+## Конфигурация (`config.php`)
+
+Обязательные ключи верхнего уровня:
+
+| Ключ | Описание |
+|------|----------|
+| `log_file` | Путь к логу, например `/var/log/notifications.log`. |
+| `db_config` | Подключение к MySQL/MariaDB для очереди (`host`, `port`, `database`, `username`, `password`, `charset`). |
+| `telegram_config` | `bot_token`, `proxies[]`, `timeout`. |
+| `vk_config` | `access_token`, `api_version`, `proxies[]`, `timeout`. |
+| `matrix_config` | `homeserver_url`, `access_token`, `proxies[]`, `timeout`. |
+| `rules` | Массив правил доставки (см. ниже). |
+
+### Правило (`rules`)
+
+```php
+'kitchen1' => [
+    'enabled'    => true,
+    'channels'   => ['vk'],
+    'recipients' => [
+        'vk' => ['123456789'],
+    ],
+    'schedule'   => [
+        'days'  => [1, 2, 3, 4, 5],           // 1=пн … 7=вс (timezone сервера PHP)
+        'hours' => [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    ],
+    // Опционально: только для указанных ?sender=
+    'senders'    => ['grafana', 'kuma'],
+    // Опционально: всегда отправлять, игнорируя schedule
+    // 'always_send' => true,
+],
+```
+
+- Пустой `schedule` или `schedule: []` — доставка в любое время.
+- `senders` отсутствует или `[]` — правило для любого запроса (в т.ч. без `?sender`).
+- `enabled: false` — правило не обрабатывается; записи в очереди для него ждут включения или истекают через 7 дней.
+
+### Прокси
+
+В `telegram_config` / `vk_config` / `matrix_config` ключ `proxies` — массив URI; используется первый элемент (`http://`, `socks5h://` и т.д.). Пустой массив — без прокси.
+
+## Очередь отложенных сообщений
+
+Если правило **подходит** по `enabled`, `senders` и `rules=`, но **не попадает в `schedule`**, каждая пара «канал + получатель» сохраняется в таблицу `notification_queue` (текст, `telegram_parse_mode` для Telegram, имя правила).
+
+**`cron.php`** (через `cron.sh`, раз в минуту):
+
+1. Удаляет записи старше **7 дней**.
+2. Обходит очередь в порядке `created_at`.
+3. Для каждой записи проверяет, что правило существует, включено и **сейчас** попадает в `schedule`.
+4. Отправляет в канал; при успехе удаляет запись из очереди.
+
+В очередь попадают только сообщения, отложенные из‑за **расписания**. Ошибки API (Telegram/VK недоступен) при немедленной отправке в очередь не кладутся; при доставке из cron неудачная попытка остаётся в очереди до следующего запуска или до истечения недели.
+
+Ответы `send.php`:
+
+| Ситуация | HTTP-тело |
+|----------|-----------|
+| Отправлено сразу | `Notifications sent according to rules.` |
+| Только в очереди | `Notifications queued for later delivery.` |
+| Ничего не сделано | `No notifications sent.` |
+
+## `send.php`: форматы запроса
+
+Только **POST**.
+
+### Универсальный режим (без `?sender`)
+
+- JSON: `{ "message": "..." }` или `text` / `body`
+- JSON с разными текстами: `{ "telegram": "...", "vk": "...", "matrix": "..." }`
+- `parse_mode` / `telegram_parse_mode` — только для Telegram
+- `text/plain` — всё тело как сообщение
+- `application/x-www-form-urlencoded` — поле `message` или `text`
+
+### Режимы `?sender=`
+
+| `sender` | Поведение |
+|----------|-----------|
+| `grafana` | Форматирование как в legacy Grafana webhook |
+| `kuma` | Форматирование как в Uptime Kuma |
+| `market` или `market/notification` | Вебхук [Яндекс Маркета](https://yandex.ru/dev/market/partner-api/doc/ru/push-notifications/reference/sendNotification): тело `php://input` в каналы **без разбора**; ответ всегда JSON `200` с `{ "version": "1.0.0", "name": "all-notifications", "time": "<текущее UTC>" }`. В URL для `market/notification` используйте `sender=market%2Fnotification`. |
+
+### GET-параметры
+
+| Параметр | Назначение |
+|----------|------------|
+| `rules` | Список имён правил через запятую (`?rules=kitchen1,kitchen2`). Без параметра — все правила. |
+| `sender` | Фильтр источника (см. таблицу выше и `senders` в правиле). |
+| `chat_id` | Подстановка получателя Telegram, если в правиле список пуст. |
+| `user_id` | Подстановка получателя VK. |
+| `room_id` | Подстановка комнаты Matrix (`!room:server`). |
+
+Интеграция с **Directus** (отдельный репозиторий) шлёт POST на `send.php` без `sender`. Для Grafana/Kuma укажите `?sender=grafana` или `?sender=kuma`.
 
 ## Matrix: технический пользователь и комната
 
-Чтобы отправка в Matrix из шлюза работала, недостаточно положить в `config.php` только `homeserver_url`, `access_token` и `room_id`. У **того же** Matrix-пользователя, для которого вы получили токен (технический / бот-аккаунт), комната должна быть **реально принята** в клиенте.
+Токен в `matrix_config` должен принадлежать пользователю, который **принял приглашение** в целевую комнату в Element (или другом клиенте). Пока бот не в комнате, API вернёт `403 M_FORBIDDEN` — это не ошибка шлюза.
 
-Обычный порядок такой:
+Сообщения через Client-Server API уходят **без E2EE**. Для бот-каналов обычно используют отдельную комнату **без шифрования**; в зашифрованных комнатах клиенты показывают «Not encrypted».
 
-1. Зайти в **Element** (или другой клиент) **именно под этим техническим пользователем**, не под своим личным аккаунтом.
-2. Увидеть **приглашение** в нужную комнату или личку — **принять** его.
-3. Если сервер или комната требуют **вопрос при входе** (knock / join rules, «ответ на вопрос» и т.п.) — **отправить запрошенный ответ** или выполнить условие, пока пользователь не станет полноправным участником комнаты.
-4. Убедиться, что в списке участников комнаты есть этот MXID, и только после этого прописывать **`room_id`** в `config.php` и проверять шлюз.
+## Примеры curl
 
-Пока технический пользователь **не вступил** в комнату (приглашение не принято, ответ не дан), API вернёт **`403 M_FORBIDDEN`** вроде «User … not in room …» — это ожидаемо, а не сбой `send.php`.
-
-## Примеры curl для проверки `send.php`
-
-Подставьте свой базовый URL вместо `https://example.com/all-notifications/send.php`. Запросы только **POST**.
-
-Общее текстовое сообщение (одинаково уйдёт в каналы, для которых в сработавшем правиле есть получатели):
+Базовый URL: `https://example.com/all-notifications/send.php`.
 
 ```bash
+# Простое сообщение
 curl -sS -X POST 'https://example.com/all-notifications/send.php' \
   -H 'Content-Type: application/json' \
-  -d '{"message":"Тест шлюза send.php"}'
-```
+  -d '{"message":"Тест шлюза"}'
 
-Только выбранные правила из `config.php`:
-
-```bash
+# Одно правило
 curl -sS -X POST 'https://example.com/all-notifications/send.php?rules=main' \
   -H 'Content-Type: application/json' \
-  -d '{"message":"Только правило main"}'
-```
+  -d '{"message":"Только main"}'
 
-Разный текст для Telegram и VK (опционально отдельное поле `matrix`):
-
-```bash
+# Разный текст по каналам
 curl -sS -X POST 'https://example.com/all-notifications/send.php?rules=main' \
   -H 'Content-Type: application/json' \
-  -d '{"telegram":"*Жирный* тест","vk":"Обычный текст для VK","parse_mode":"MarkdownV2"}'
-```
+  -d '{"telegram":"*жирный*","vk":"обычный","parse_mode":"MarkdownV2"}'
 
-Правило с фильтром `senders` в `config.php` (сработает только вместе с `?sender=grafana` или `?sender=kuma` и `?rules=from_monitoring`):
-
-```bash
-curl -sS -X POST 'https://example.com/all-notifications/send.php?rules=from_monitoring&sender=grafana' \
+# Grafana
+curl -sS -X POST 'https://example.com/all-notifications/send.php?sender=grafana&rules=from_monitoring' \
   -H 'Content-Type: application/json' \
-  -d '{"message":"Алерт как от Grafana"}'
-```
+  -d '{"status":"firing","title":"Disk full"}'
 
-Сырой plain text:
-
-```bash
-curl -sS -X POST 'https://example.com/all-notifications/send.php' \
-  -H 'Content-Type: text/plain; charset=utf-8' \
-  --data-binary 'Простое тело без JSON'
-```
-
-Форма `application/x-www-form-urlencoded`:
-
-```bash
-curl -sS -X POST 'https://example.com/all-notifications/send.php' \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode 'message=Тест из формы'
-```
-
-Подстановка получателей из query, если в правиле для канала список пустой:
-
-```bash
-curl -sS -X POST 'https://example.com/all-notifications/send.php?chat_id=123456789&user_id=987654321' \
+# Яндекс Маркет (PING)
+curl -sS -X POST 'https://example.com/all-notifications/send.php?sender=market&rules=main' \
   -H 'Content-Type: application/json' \
-  -d '{"message":"На GET chat_id / user_id"}'
+  -d '{"notificationType":"PING"}'
+
+# Получатели из query
+curl -sS -X POST 'https://example.com/all-notifications/send.php?chat_id=123&user_id=456' \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"На GET-параметры"}'
 ```
 
-Флаг `-v` у `curl` покажет HTTP-код; тело ответа шлюза обычно короткое (`Notifications sent...` / `No notifications sent`).
+Проверка воркера очереди вручную:
+
+```bash
+./cron.sh
+```
 
 ## Требования
 
-- PHP 8.0+ (в коде используются `str_contains` в `grafana-notifications.php`, типизированные сигнатуры в `send.php`).
-- Расширения: curl, mbstring.
+- PHP 8.0+ (`str_contains`, типизированные сигнатуры)
+- Расширения: **curl**, **mbstring**, **pdo_mysql**
+- MySQL или MariaDB для очереди
+- Cron (или systemd timer) для `cron.sh`
 
 ## Логи
 
-- `send.php` — путь из `config['log_file']` (в примере: `/var/log/notifications.log`).
-- `grafana-notifications.php` / `kuma-notifications.php` — пути заданы внутри соответствующих файлов.
+- `send.php` и `cron.php` пишут в `config['log_file']` (по умолчанию `/var/log/notifications.log`).
+- Вывод `cron.sh` в cron-задаче можно перенаправить в отдельный файл (см. пример в разделе «Развёртывание»).

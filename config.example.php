@@ -36,6 +36,16 @@
 return [
     'log_file' => '/var/log/notifications.log',
 
+    // MySQL/MariaDB для очереди отложенных уведомлений (см. schema.sql, cron.sh).
+    'db_config' => [
+        'host'     => '127.0.0.1',
+        'port'     => 3306,
+        'database' => 'notifications',
+        'username' => 'notifications',
+        'password' => 'YOUR_DB_PASSWORD',
+        'charset'  => 'utf8mb4',
+    ],
+
     'telegram_config' => [
         'bot_token' => 'YOUR_TELEGRAM_BOT_TOKEN',
         // Первый элемент массива используется как прокси; [] — без прокси
