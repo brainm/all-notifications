@@ -29,6 +29,12 @@ $log_file = $config['log_file'];
 require __DIR__ . '/send_functions.php';
 require __DIR__ . '/queue.php';
 
+$rotatedMonth = rotateNotificationLogIfNeeded($log_file);
+if ($rotatedMonth !== null) {
+    $archiveDir = notificationLogArchiveDir($log_file);
+    logMessage("Cron: log rotated, previous month archived to {$archiveDir}/{$rotatedMonth}.log.gz");
+}
+
 try {
     $pdo = notificationQueuePdo($config['db_config']);
 } catch (Throwable $e) {

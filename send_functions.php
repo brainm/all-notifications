@@ -1,6 +1,80 @@
 <?php
 // ---------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ------------------------------
 
+/**
+ * Каталог архивов: для /var/log/notifications.log → /var/log/notifications/
+ */
+function notificationLogArchiveDir(string $log_file): string {
+    return dirname($log_file) . '/notifications';
+}
+
+/**
+ * В начале нового месяца архивирует notifications.log в YYYY-MM.log.gz и начинает чистый файл.
+ * Маркер текущего месяца: <archive_dir>/.current-month
+ * @return string|null Имя архива YYYY-MM при ротации, иначе null
+ */
+function rotateNotificationLogIfNeeded(string $log_file): ?string {
+    $currentMonth = date('Y-m');
+    $archiveDir = notificationLogArchiveDir($log_file);
+    $markerPath = $archiveDir . '/.current-month';
+
+    if (!is_dir($archiveDir) && !@mkdir($archiveDir, 0755, true) && !is_dir($archiveDir)) {
+        return null;
+    }
+
+    $fp = @fopen($markerPath, 'c+');
+    if ($fp === false) {
+        return null;
+    }
+
+    if (!flock($fp, LOCK_EX)) {
+        fclose($fp);
+        return null;
+    }
+
+    rewind($fp);
+    $storedMonth = trim((string) stream_get_contents($fp));
+    if ($storedMonth === '') {
+        $storedMonth = null;
+    }
+
+    if ($storedMonth === $currentMonth) {
+        flock($fp, LOCK_UN);
+        fclose($fp);
+        return null;
+    }
+
+    $archivedMonth = null;
+    if ($storedMonth !== null && is_file($log_file)) {
+        $size = filesize($log_file);
+        if ($size !== false && $size > 0) {
+            $archivePath = $archiveDir . '/' . $storedMonth . '.log.gz';
+            $plain = file_get_contents($log_file);
+            $gz = ($plain !== false && $plain !== '') ? gzencode($plain, 9) : false;
+            if ($gz !== false && file_put_contents($archivePath, $gz, LOCK_EX) !== false) {
+                file_put_contents($log_file, '', LOCK_EX);
+                @chmod($archivePath, 0644);
+                $archivedMonth = $storedMonth;
+            }
+        } elseif ($size === 0) {
+            // Пустой лог — просто переходим на новый месяц без архива.
+        }
+    }
+
+    ftruncate($fp, 0);
+    rewind($fp);
+    fwrite($fp, $currentMonth);
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+
+    if (!is_file($log_file)) {
+        @touch($log_file);
+    }
+
+    return $archivedMonth;
+}
+
 function logMessage(string $msg): void {
     global $log_file;
     $timestamp = date('Y-m-d H:i:s');

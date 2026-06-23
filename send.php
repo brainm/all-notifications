@@ -73,6 +73,12 @@ $rules = $config['rules'];
 require __DIR__ . '/send_functions.php';
 require __DIR__ . '/queue.php';
 
+$rotatedMonth = rotateNotificationLogIfNeeded($log_file);
+if ($rotatedMonth !== null) {
+    $archiveDir = notificationLogArchiveDir($log_file);
+    logMessage("Log rotated: previous month archived to {$archiveDir}/{$rotatedMonth}.log.gz");
+}
+
 try {
     $queue_pdo = notificationQueuePdo($config['db_config']);
 } catch (Throwable $e) {

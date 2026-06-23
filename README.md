@@ -184,11 +184,12 @@ curl -sS -X POST 'https://example.com/all-notifications/send.php?chat_id=123&use
 ## Требования
 
 - PHP 8.0+ (`str_contains`, типизированные сигнатуры)
-- Расширения: **curl**, **mbstring**, **pdo_mysql**
+- Расширения: **curl**, **mbstring**, **pdo_mysql**, **zlib** (для ротации логов `gzencode`)
 - MySQL или MariaDB для очереди
 - Cron (или systemd timer) для `cron.sh`
 
 ## Логи
 
 - `send.php` и `cron.php` пишут в `config['log_file']` (по умолчанию `/var/log/notifications.log`).
-- Вывод `cron.sh` в cron-задаче можно перенаправить в отдельный файл (см. пример в разделе «Развёртывание»).
+- **Ротация по месяцам:** при первом запуске в новом календарном месяце (в `send.php` или `cron.php`) текущий лог сжимается в `gzip` и сохраняется как `/var/log/notifications/YYYY-MM.log.gz` (для пути `/var/log/notifications.log` каталог архивов — `/var/log/notifications/`). После этого `notifications.log` начинается заново. Маркер месяца: `/var/log/notifications/.current-month`.
+- Вывод `cron.sh` в cron-задаче можно перенаправить в отдельный файл (см. раздел «Развёртывание»).
