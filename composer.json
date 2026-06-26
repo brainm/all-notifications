@@ -1,0 +1,11 @@
+{
+    "name": "all-notifications/gateway",
+    "description": "Notification gateway with web push inbox",
+    "require": {
+        "php": ">=8.0",
+        "minishlink/web-push": "^9.0"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

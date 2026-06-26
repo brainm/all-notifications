@@ -295,7 +295,7 @@ function buildChannelMessages(array $data, string $raw_input): array {
         $default = is_string($data['raw_text']) ? $data['raw_text'] : '';
     } elseif ($data !== []) {
         $copy = $data;
-        foreach (['telegram', 'vk', 'matrix', 'parse_mode', 'telegram_parse_mode'] as $k) {
+        foreach (['telegram', 'vk', 'matrix', 'web', 'parse_mode', 'telegram_parse_mode'] as $k) {
             unset($copy[$k]);
         }
         if ($copy !== []) {
@@ -313,7 +313,9 @@ function buildChannelMessages(array $data, string $raw_input): array {
     $vk = (!empty($data['vk']) && is_string($data['vk'])) ? truncateMessageUniversal($data['vk']) : $default;
     $mx = (!empty($data['matrix']) && is_string($data['matrix'])) ? truncateMessageUniversal($data['matrix']) : $default;
 
-    return ['telegram' => $tg, 'vk' => $vk, 'matrix' => $mx];
+    $web = (!empty($data['web']) && is_string($data['web'])) ? truncateMessageUniversal($data['web']) : $default;
+
+    return ['telegram' => $tg, 'vk' => $vk, 'matrix' => $mx, 'web' => $web];
 }
 
 /**
@@ -331,6 +333,12 @@ function messageTextForChannel(string $channel, array $channelMessages): string 
             return $channelMessages['matrix'];
         }
         return $channelMessages['vk'] ?? $channelMessages['telegram'] ?? '';
+    }
+    if ($channel === 'web') {
+        if (!empty($channelMessages['web']) && is_string($channelMessages['web'])) {
+            return $channelMessages['web'];
+        }
+        return $channelMessages['vk'] ?? $channelMessages['telegram'] ?? $channelMessages['matrix'] ?? '';
     }
     return '';
 }

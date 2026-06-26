@@ -37,19 +37,21 @@ function enqueueNotification(
     string $channel,
     string $recipient,
     string $message_text,
-    ?string $telegram_parse_mode = null
+    ?string $telegram_parse_mode = null,
+    ?string $payload_json = null
 ): bool {
     $stmt = $pdo->prepare(
-        'INSERT INTO notification_queue (rule_name, channel, recipient, message_text, telegram_parse_mode)
-         VALUES (:rule_name, :channel, :recipient, :message_text, :telegram_parse_mode)'
+        'INSERT INTO notification_queue (rule_name, channel, recipient, message_text, telegram_parse_mode, payload_json)
+         VALUES (:rule_name, :channel, :recipient, :message_text, :telegram_parse_mode, :payload_json)'
     );
 
     return $stmt->execute([
-        ':rule_name' => $rule_name,
-        ':channel' => $channel,
-        ':recipient' => $recipient,
-        ':message_text' => $message_text,
-        ':telegram_parse_mode' => $telegram_parse_mode,
+        ':rule_name'            => $rule_name,
+        ':channel'              => $channel,
+        ':recipient'            => $recipient,
+        ':message_text'         => $message_text,
+        ':telegram_parse_mode'  => $telegram_parse_mode,
+        ':payload_json'         => $payload_json,
     ]);
 }
 
@@ -59,7 +61,8 @@ function queueRuleDeliveries(
     array $rule,
     array $channelMessages,
     ?string $telegram_parse_mode,
-    array $default_recipients
+    array $default_recipients,
+    ?string $payload_json = null
 ): int {
     $queued = 0;
 
@@ -84,10 +87,14 @@ function queueRuleDeliveries(
         $parse_mode = ($channel === 'telegram') ? $telegram_parse_mode : null;
 
         foreach ($recipients as $recipient) {
-            if (!is_string($recipient) || trim($recipient) === '') {
+            if (is_int($recipient)) {
+                $recipientStr = (string) $recipient;
+            } elseif (is_string($recipient) && trim($recipient) !== '') {
+                $recipientStr = trim($recipient);
+            } else {
                 continue;
             }
-            enqueueNotification($pdo, $rule_name, $channel, $recipient, $text, $parse_mode);
+            enqueueNotification($pdo, $rule_name, $channel, $recipientStr, $text, $parse_mode, $payload_json);
             $queued++;
         }
     }
@@ -105,11 +112,12 @@ function purgeExpiredNotifications(PDO $pdo, int $max_age_days = NOTIFICATION_QU
     return $stmt->rowCount();
 }
 
-function sendQueuedNotification(array $row, array $config): array {
+function sendQueuedNotification(array $row, array $config, PDO $pdo): array {
     $channel = $row['channel'];
     $recipient = $row['recipient'];
     $text = $row['message_text'];
     $parse_mode = $row['telegram_parse_mode'] ?? null;
+    $payload_json = $row['payload_json'] ?? null;
 
     if ($channel === 'telegram') {
         return sendToTelegram($config['telegram_config'], $recipient, $text, $parse_mode ?: null);
@@ -119,6 +127,17 @@ function sendQueuedNotification(array $row, array $config): array {
     }
     if ($channel === 'matrix') {
         return sendToMatrix($config['matrix_config'], $recipient, $text);
+    }
+    if ($channel === 'web') {
+        if (!function_exists('resolveWebUserId')) {
+            require_once __DIR__ . '/web.php';
+        }
+        $userId = resolveWebUserId($pdo, $recipient);
+        if ($userId === null) {
+            return ['success' => false, 'error' => "Web user not found or disabled: $recipient"];
+        }
+        $result = deliverWebNotification($pdo, $config, $userId, $row['rule_name'], $text, $payload_json);
+        return ['success' => $result['success'], 'error' => $result['push']['error'] ?? ''];
     }
 
     return ['success' => false, 'error' => "Unknown channel '{$channel}'"];
@@ -133,7 +152,7 @@ function processNotificationQueue(PDO $pdo, array $config): array {
     $stats = ['sent' => 0, 'failed' => 0, 'skipped' => 0, 'orphaned' => 0];
 
     $stmt = $pdo->query(
-        'SELECT id, rule_name, channel, recipient, message_text, telegram_parse_mode
+        'SELECT id, rule_name, channel, recipient, message_text, telegram_parse_mode, payload_json
          FROM notification_queue
          ORDER BY created_at ASC, id ASC'
     );
@@ -164,7 +183,7 @@ function processNotificationQueue(PDO $pdo, array $config): array {
             continue;
         }
 
-        $result = sendQueuedNotification($row, $config);
+        $result = sendQueuedNotification($row, $config, $pdo);
         if ($result['success']) {
             $deleteStmt->execute([':id' => $row['id']]);
             $stats['sent']++;

@@ -51,13 +51,15 @@ if (!is_readable($configPath)) {
     header('Content-Type: text/plain; charset=utf-8');
     die('config.php not found or not readable next to send.php');
 }
-$config = require $configPath;
-if (!is_array($config)) {
+require __DIR__ . '/config_loader.php';
+try {
+    $config = loadFullConfig();
+} catch (Throwable $e) {
     http_response_code(500);
     header('Content-Type: text/plain; charset=utf-8');
-    die('config.php must return an array');
+    die('Configuration error: ' . $e->getMessage());
 }
-foreach (['log_file', 'telegram_config', 'vk_config', 'matrix_config', 'rules', 'db_config'] as $key) {
+foreach (['log_file', 'telegram_config', 'vk_config', 'matrix_config', 'rules', 'db_config', 'web_push_config'] as $key) {
     if (!array_key_exists($key, $config)) {
         http_response_code(500);
         header('Content-Type: text/plain; charset=utf-8');
@@ -72,6 +74,7 @@ $rules = $config['rules'];
 
 require __DIR__ . '/send_functions.php';
 require __DIR__ . '/queue.php';
+require __DIR__ . '/web.php';
 
 $rotatedMonth = rotateNotificationLogIfNeeded($log_file);
 if ($rotatedMonth !== null) {
@@ -111,17 +114,17 @@ if (isMarketNotificationSender($request_sender)) {
     if ($bodyText !== '') {
         $bodyText = truncateMessageUniversal($bodyText);
     }
-    $channelMessages = ['telegram' => $bodyText, 'vk' => $bodyText, 'matrix' => $bodyText];
+    $channelMessages = ['telegram' => $bodyText, 'vk' => $bodyText, 'matrix' => $bodyText, 'web' => $bodyText];
 } elseif ($request_sender === 'grafana') {
     $legacy = decodeLegacyJsonPayload($raw_input);
     $legacy = removeBackslashes($legacy);
     $formatted = formatGrafanaMessage($legacy);
-    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted];
+    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted];
 } elseif ($request_sender === 'kuma') {
     $legacy = decodeLegacyJsonPayload($raw_input);
     $legacy = removeBackslashes($legacy);
     $formatted = formatKumaMessage($legacy);
-    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted];
+    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted];
 } else {
     $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
     $data = parseIncomingPayload($raw_input, $contentType);
@@ -137,6 +140,12 @@ if (isMarketNotificationSender($request_sender)) {
 logMessage('Resolved telegram message length: ' . mb_strlen($channelMessages['telegram']));
 logMessage('Resolved vk message length: ' . mb_strlen($channelMessages['vk']));
 logMessage('Resolved matrix message length: ' . mb_strlen($channelMessages['matrix'] ?? ''));
+logMessage('Resolved web message length: ' . mb_strlen($channelMessages['web'] ?? ''));
+
+$web_payload_json = null;
+if ($raw_input !== '') {
+    $web_payload_json = $raw_input;
+}
 
 $get_chat_id = isset($_GET['chat_id']) ? trim($_GET['chat_id']) : null;
 $get_user_id = isset($_GET['user_id']) ? trim($_GET['user_id']) : null;
@@ -195,7 +204,8 @@ foreach ($rules as $rule_name => $rule) {
             $rule,
             $channelMessages,
             $telegram_parse_mode,
-            $default_recipients
+            $default_recipients,
+            $web_payload_json
         );
         if ($queued > 0) {
             $queued_any = true;
@@ -238,6 +248,17 @@ foreach ($rules as $rule_name => $rule) {
                 $result = sendToMatrix($matrix_config, $recipient, $text);
                 logMessage("Matrix to $recipient: " . ($result['success'] ? "OK" : "FAIL - " . $result['error']));
                 if ($result['success']) $sent_any = true;
+            } elseif ($channel === 'web') {
+                $userId = resolveWebUserId($queue_pdo, $recipient);
+                if ($userId === null) {
+                    logMessage("Web user '$recipient' not found or disabled, skipped.");
+                    continue;
+                }
+                $result = deliverWebNotification($queue_pdo, $config, $userId, $rule_name, $text, $web_payload_json);
+                $pushOk = $result['push']['success'] ?? false;
+                $pushInfo = $pushOk ? 'push OK' : ('push FAIL: ' . ($result['push']['error'] ?? 'unknown'));
+                logMessage("Web to user $userId ($recipient): inbox #{$result['notification_id']}, $pushInfo");
+                $sent_any = true;
             } else {
                 logMessage("Unknown channel '$channel' in rule '$rule_name'");
             }

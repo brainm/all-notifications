@@ -11,13 +11,15 @@ if (!is_readable($configPath)) {
     exit(1);
 }
 
-$config = require $configPath;
-if (!is_array($config)) {
-    fwrite(STDERR, "config.php must return an array\n");
+require __DIR__ . '/config_loader.php';
+try {
+    $config = loadFullConfig();
+} catch (Throwable $e) {
+    fwrite(STDERR, 'Configuration error: ' . $e->getMessage() . "\n");
     exit(1);
 }
 
-foreach (['log_file', 'telegram_config', 'vk_config', 'matrix_config', 'rules', 'db_config'] as $key) {
+foreach (['log_file', 'telegram_config', 'vk_config', 'matrix_config', 'rules', 'db_config', 'web_push_config'] as $key) {
     if (!array_key_exists($key, $config)) {
         fwrite(STDERR, "config.php: missing key \"{$key}\"\n");
         exit(1);
@@ -28,6 +30,7 @@ $log_file = $config['log_file'];
 
 require __DIR__ . '/send_functions.php';
 require __DIR__ . '/queue.php';
+require __DIR__ . '/web.php';
 
 $rotatedMonth = rotateNotificationLogIfNeeded($log_file);
 if ($rotatedMonth !== null) {
@@ -54,6 +57,15 @@ try {
     $purged = purgeExpiredNotifications($pdo);
     if ($purged > 0) {
         logMessage("Cron: purged {$purged} queue item(s) older than " . NOTIFICATION_QUEUE_MAX_AGE_DAYS . ' day(s).');
+    }
+
+    $webPurged = purgeExpiredWebNotifications($pdo);
+    if ($webPurged > 0) {
+        logMessage("Cron: purged {$webPurged} web notification(s).");
+    }
+    $deletedUserPurged = purgeDataForDeletedUsers($pdo);
+    if ($deletedUserPurged > 0) {
+        logMessage("Cron: purged {$deletedUserPurged} web notification(s) for soft-deleted users.");
     }
 
     $stats = processNotificationQueue($pdo, $config);

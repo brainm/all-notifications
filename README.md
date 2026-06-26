@@ -1,43 +1,92 @@
 # all-notifications
 
-PHP-шлюз для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK** и **Matrix** по настраиваемым правилам (каналы, получатели, расписание). Сообщения, пришедшие вне окна `schedule`, не теряются: попадают в очередь MySQL и доставляются, когда расписание снова разрешает отправку.
+PHP-шлюз для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK**, **Matrix** и **Web** (inbox + browser push) по настраиваемым правилам.
 
-Проект не привязан к фреймворку: PHP 8+, cURL, PDO (MySQL/MariaDB), доступ к внешним API.
+Проект не привязан к фреймворку: PHP 8+, cURL, PDO (MySQL/MariaDB), Node.js для сборки фронтенда.
 
-## Состав репозитория
+## Структура репозитория
 
-| Файл | Назначение |
+```
+all-notifications/
+├── package.json, vite.config.js, tailwind.config.js
+├── composer.json, schema.sql
+├── public/              — manifest.json, service-worker.js
+├── src/                 — исходники PHP и React
+│   ├── send.php         — HTTP-шлюз (не трогать URL вебхуков)
+│   ├── cron.php, queue.php, web.php, auth.php, api.php, …
+│   ├── entries/         — React: login, dashboard, admin
+│   ├── components/, lib/
+│   ├── assets.php       — подключение Vite-сборки
+│   └── config.example.php
+└── dist/                — production (gitignored), document root на сервере
+```
+
+| Путь | Назначение |
 |------|------------|
-| `send.php` | HTTP-шлюз: приём POST, разбор тела, применение правил, немедленная отправка или постановка в очередь. |
-| `send_functions.php` | Вспомогательные функции отправки и форматирования (подключается из `send.php` и `cron.php`). |
-| `queue.php` | Работа с очередью в БД: постановка, доставка, очистка просроченных записей. |
-| `cron.php` | CLI-воркер очереди: удаляет записи старше 7 дней, отправляет накопившееся. |
-| `cron.sh` | Обёртка для cron: `php cron.php`. |
-| `schema.sql` | DDL таблицы `notification_queue` для MySQL/MariaDB. |
-| `config.php` | Рабочая конфигурация (не коммитится). |
-| `config.example.php` | Шаблон конфигурации без секретов. |
+| `src/send.php` | HTTP-шлюз: приём POST, разбор тела, применение правил, немедленная отправка или постановка в очередь. |
+| `src/send_functions.php` | Вспомогательные функции отправки и форматирования. |
+| `src/queue.php` | Очередь в БД: постановка, доставка, очистка. |
+| `src/cron.php` / `src/cron.sh` | CLI-воркер очереди. |
+| `src/web.php` | Канал web: пользователи, inbox, Web Push. |
+| `src/login.php`, `dashboard.php`, `admin.php` | PHP-оболочки с React (Vite). |
+| `src/api.php` | JSON API для inbox, push, admin. |
+| `public/service-worker.js`, `manifest.json` | PWA и push в браузере. |
+| `src/config.php` | Рабочая конфигурация (не коммитится). |
 
-## Развёртывание
+## Сборка и развёртывание
 
-1. Скопируйте каталог на сервер (nginx + php-fpm или аналог).
-2. `cp config.example.php config.php` — заполните токены, `db_config`, правила `rules`.
-3. Создайте БД и таблицу очереди:
+### 1. Зависимости
+
+```bash
+npm install
+composer install
+php scripts/generate-vapid-keys.php   # → WEB_PUSH_* в корневой .env
+```
+
+### 2. Конфигурация
+
+```bash
+cp src/config.example.php src/config.php
+```
+
+Заполните токены, `db_config`, `web_push_config` (URL и subject), правила `rules`.  
+Секреты в корневом `.env`: `ADMIN_*`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` → `dist/.env` при сборке.
+
+### 3. База данных
 
 ```bash
 mysql -u root -p -e "CREATE DATABASE notifications CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 mysql -u root -p notifications < schema.sql
 ```
 
-4. Убедитесь, что пользователь php-fpm может писать в `log_file` и подключаться к MySQL.
-5. Добавьте cron (каждую минуту):
+### 4. Production-сборка
 
-```cron
-* * * * * /path/to/all-notifications/cron.sh >> /var/log/notifications-cron.log 2>&1
+```bash
+npm run build
 ```
 
-6. В вебхуках укажите URL вида `https://ваш-домен/.../send.php` (см. разделы ниже про query-параметры).
+Сборка:
 
-Рекомендуется не отдавать `config.php` как статику из document root (запрет в конфиге веб-сервера).
+- компилирует React (login, dashboard, admin) и Tailwind CSS;
+- копирует `src/**/*.php` (включая `config.php`) и `cron.sh` в `dist/`;
+- копирует `public/` и `vendor/` в `dist/`;
+- генерирует manifest для `assets.php`.
+
+**Document root** веб-сервера указывайте на каталог **`dist/`** (например `https://site.com/notifications/` → `.../all-notifications/dist/`).
+
+После каждого изменения PHP или фронтенда пересобирайте: `npm run build`.
+
+### 5. Cron
+
+```cron
+* * * * * /path/to/all-notifications/dist/cron.sh >> /var/log/notifications-cron.log 2>&1
+```
+
+### 6. Вебхуки
+
+URL шлюза: `https://ваш-домен/.../send.php` (относительно `dist/`).
+
+Рекомендуется не отдавать `config.php` как статику (запрет в конфиге веб-сервера).
 
 ## Конфигурация (`config.php`)
 
@@ -46,7 +95,9 @@ mysql -u root -p notifications < schema.sql
 | Ключ | Описание |
 |------|----------|
 | `log_file` | Путь к логу, например `/var/log/notifications.log`. |
-| `db_config` | Подключение к MySQL/MariaDB для очереди (`host`, `port`, `database`, `username`, `password`, `charset`). |
+| `db_config` | MySQL/MariaDB. |
+| `web_push_config` | `app_base_url`, `app_base_path`, `vapid.subject`. |
+| `dist/.env` | `ADMIN_*`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` (создаётся при сборке). |
 | `telegram_config` | `bot_token`, `proxies[]`, `timeout`. |
 | `vk_config` | `access_token`, `api_version`, `proxies[]`, `timeout`. |
 | `matrix_config` | `homeserver_url`, `access_token`, `proxies[]`, `timeout`. |
@@ -76,6 +127,19 @@ mysql -u root -p notifications < schema.sql
 - `senders` отсутствует или `[]` — правило для любого запроса (в т.ч. без `?sender`).
 - `enabled: false` — правило не обрабатывается; записи в очереди для него ждут включения или истекают через 7 дней.
 
+Канал **`web`** — получатели в `recipients.web` указываются **login** (локальная часть email) или **числовой id** пользователя из `admin.php`:
+
+```php
+'web_alerts' => [
+    'enabled'    => true,
+    'channels'   => ['web'],
+    'recipients' => [
+        'web' => ['ivan', 3],
+    ],
+    'schedule'   => [ /* как у остальных каналов */ ],
+],
+```
+
 ### Прокси
 
 В `telegram_config` / `vk_config` / `matrix_config` ключ `proxies` — массив URI; используется первый элемент (`http://`, `socks5h://` и т.д.). Пустой массив — без прокси.
@@ -100,6 +164,34 @@ mysql -u root -p notifications < schema.sql
 | Отправлено сразу | `Notifications sent according to rules.` |
 | Только в очереди | `Notifications queued for later delivery.` |
 | Ничего не сделано | `No notifications sent.` |
+
+## Web-интерфейс и push
+
+| URL (в `dist/`) | Назначение |
+|-----------------|------------|
+| `login.php` | Вход пользователя (React + Tailwind). |
+| `dashboard.php` | Inbox: список уведомлений, «прочитано», push. |
+| `admin.php` | Управление пользователями (отдельная admin-сессия). |
+| `api.php` | JSON API для фронтенда и push subscribe. |
+
+Порядок внедрения:
+
+1. `composer install`, VAPID-ключи в `.env` (`WEB_PUSH_*`).
+2. `npm run build`, document root → `dist/`.
+3. Применить `schema.sql`.
+4. Создать пользователей в `admin.php`.
+5. Добавить канал `web` в правила `config.php`.
+
+**Надёжность:** сообщение всегда попадает в `web_notifications`. Push — дополнительный сигнал; при долгом offline пользователь увидит inbox при открытии `dashboard.php`.
+
+Миграция существующей БД:
+
+```sql
+ALTER TABLE notification_queue
+    MODIFY channel ENUM('telegram', 'vk', 'matrix', 'web') NOT NULL;
+ALTER TABLE notification_queue
+    ADD COLUMN payload_json MEDIUMTEXT DEFAULT NULL AFTER telegram_parse_mode;
+```
 
 ## `send.php`: форматы запроса
 
@@ -178,15 +270,17 @@ curl -sS -X POST 'https://example.com/all-notifications/send.php?chat_id=123&use
 Проверка воркера очереди вручную:
 
 ```bash
-./cron.sh
+./dist/cron.sh
 ```
 
 ## Требования
 
 - PHP 8.0+ (`str_contains`, типизированные сигнатуры)
-- Расширения: **curl**, **mbstring**, **pdo_mysql**, **zlib** (для ротации логов `gzencode`)
+- Расширения: **curl**, **mbstring**, **pdo_mysql**, **zlib**, **json**
+- **Node.js 18+** и `npm run build` для фронтенда
+- **Composer** + `minishlink/web-push` для browser push
 - MySQL или MariaDB для очереди
-- Cron (или systemd timer) для `cron.sh`
+- Cron (или systemd timer) для `dist/cron.sh`
 
 ## Логи
 

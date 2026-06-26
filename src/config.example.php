@@ -32,6 +32,10 @@
  * homeserver_url — базовый URL Synapse/Dendrite (без завершающего /), например https://matrix.example.org
  * access_token — Bearer после m.login.password.
  * В rules: канал matrix, recipients — список room_id (!abc:server). Опционально GET room_id= если в правиле пусто.
+ *
+ * --- Admin / Web Push (.env) ---
+ * ADMIN_LOGIN, ADMIN_PASSWORD, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY
+ * в dist/.env (создаётся при сборке из корневого .env).
  */
 return [
     'log_file' => '/var/log/notifications.log',
@@ -44,6 +48,17 @@ return [
         'username' => 'notifications',
         'password' => 'YOUR_DB_PASSWORD',
         'charset'  => 'utf8mb4',
+    ],
+
+    // Web Push + URL веб-интерфейса (login.php, dashboard.php).
+    // VAPID public/private — в dist/.env (WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY).
+    // app_base_url — для справки/будущего; ссылка в push строится относительно origin PWA.
+    'web_push_config' => [
+        'app_base_url'  => 'https://panel.example.com/notifications',
+        'app_base_path' => '/notifications',
+        'vapid' => [
+            'subject' => 'mailto:admin@site.com',
+        ],
     ],
 
     'telegram_config' => [
@@ -97,6 +112,15 @@ return [
             ],
             'schedule'   => [],
             'senders'    => ['grafana', 'kuma'],
+        ],
+        // Web inbox + browser push: recipients — login или id пользователя из admin.php
+        'web_alerts' => [
+            'enabled'    => true,
+            'channels'   => ['web'],
+            'recipients' => [
+                'web' => ['ivan'],
+            ],
+            'schedule'   => [],
         ],
     ],
 ];
