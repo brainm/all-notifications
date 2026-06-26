@@ -115,9 +115,14 @@ if (str_starts_with($action, 'admin_')) {
         if (!$user) {
             apiJsonError(404, 'not found');
         }
+        $notifLimit = min(50, max(1, (int) ($_GET['notifications_limit'] ?? WEB_NOTIFICATIONS_PAGE_SIZE)));
+        $notifOffset = max(0, (int) ($_GET['notifications_offset'] ?? 0));
+        $notifications = listWebNotificationsForUser($pdo, $uid, $notifLimit, $notifOffset);
+        $totalNotifications = countWebNotificationsForUser($pdo, $uid);
         echo json_encode([
             'user' => publicUserRow($user),
-            'notifications' => listWebNotificationsForUser($pdo, $uid, 50, 0),
+            'notifications' => $notifications,
+            'notifications_has_more' => ($notifOffset + count($notifications)) < $totalNotifications,
             'subscriptions' => listUserSubscriptions($pdo, $uid),
         ], JSON_UNESCAPED_UNICODE);
         exit;

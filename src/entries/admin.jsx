@@ -18,6 +18,8 @@ const EMPTY_INVITE_FORM = {
   enabled: true,
 };
 
+const ADMIN_INBOX_PAGE_SIZE = 10;
+
 function InviteLinkDialog({ open, url, onClose }) {
   const [copied, setCopied] = useState(false);
 
@@ -426,15 +428,42 @@ function EditUserDialog({ user, open, onClose, onSaved }) {
 
 function UserDetail({ userId, onBack, onFlash, onEdit, onInviteLink, refreshToken = 0 }) {
   const [detail, setDetail] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const load = useCallback(async () => {
-    const data = await apiGet("admin_user", { user_id: String(userId) });
+    const data = await apiGet("admin_user", {
+      user_id: String(userId),
+      notifications_limit: String(ADMIN_INBOX_PAGE_SIZE),
+      notifications_offset: "0",
+    });
     setDetail(data);
+    setNotifications(data.notifications || []);
+    setHasMore(!!data.notifications_has_more);
   }, [userId]);
 
   useEffect(() => {
     load().catch((e) => onFlash(e.message, "error"));
   }, [load, onFlash, refreshToken]);
+
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await apiGet("admin_user", {
+        user_id: String(userId),
+        notifications_limit: String(ADMIN_INBOX_PAGE_SIZE),
+        notifications_offset: String(notifications.length),
+      });
+      setNotifications((prev) => [...prev, ...(data.notifications || [])]);
+      setHasMore(!!data.notifications_has_more);
+    } catch (e) {
+      onFlash(e.message, "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (!detail) return <p className="text-slate-500">Загрузка…</p>;
 
@@ -513,20 +542,34 @@ function UserDetail({ userId, onBack, onFlash, onEdit, onInviteLink, refreshToke
 
       <section className="card">
         <h3 className="mb-3 font-semibold">Inbox</h3>
-        <div className="max-h-96 space-y-2 overflow-y-auto">
-          {detail.notifications?.map((n) => (
-            <div
-              key={n.id}
-              className={`rounded-lg border p-3 text-sm ${!n.seen_at ? "border-accent/40 bg-blue-50/50" : "border-slate-200"}`}
-            >
-              <div className="mb-1 flex justify-between gap-2 font-medium">
-                <span>{n.rule_name}</span>
-                <span className="text-xs text-slate-500">{n.created_at}</span>
+        {notifications.length === 0 ? (
+          <p className="text-sm text-slate-500">Нет уведомлений</p>
+        ) : (
+          <div className="space-y-2">
+            {notifications.map((n) => (
+              <div
+                key={n.id}
+                className={`rounded-lg border p-3 text-sm ${!n.seen_at ? "border-accent/40 bg-blue-50/50" : "border-slate-200"}`}
+              >
+                <div className="mb-1 flex flex-wrap justify-between gap-2 font-medium">
+                  <span>{n.rule_name}</span>
+                  <time className="text-xs text-slate-500">{n.created_at}</time>
+                </div>
+                <pre className="whitespace-pre-wrap text-slate-700">{n.message_text}</pre>
+                <p className="mt-2 text-xs text-slate-500">
+                  {n.seen_at ? `Прочитано: ${n.seen_at}` : "Не прочитано"}
+                </p>
               </div>
-              <pre className="whitespace-pre-wrap text-slate-700">{n.message_text}</pre>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
+        {hasMore && (
+          <div className="mt-4 flex justify-center">
+            <button type="button" className="btn-secondary" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "Загрузка…" : "Загрузить ещё"}
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );
