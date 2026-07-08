@@ -33,6 +33,12 @@
  * access_token — Bearer после m.login.password.
  * В rules: канал matrix, recipients — список room_id (!abc:server). Опционально GET room_id= если в правиле пусто.
  *
+ * --- Email (email_config) ---
+ * SMTP через PHPMailer. В rules: канал email, recipients — список адресов user@example.com.
+ * from_email, from_name — опционально; если from_email не задан, берётся username (если email) или noreply@<host>.
+ * Тема: GET subject=, JSON "subject" или "title", иначе имя правила. Текст — как у остальных каналов (ключ email в JSON).
+ * Опционально GET email= если в правиле пустые recipients.email.
+ *
  * --- Admin / Web Push (.env) ---
  * ADMIN_LOGIN, ADMIN_PASSWORD, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY
  * в dist/.env (создаётся при сборке из корневого .env).
@@ -89,6 +95,18 @@ return [
         'timeout'        => 10,
     ],
 
+    'email_config' => [
+        'host'       => 'smtp.example.com',
+        'port'       => 587,
+        'encryption' => 'tls', // tls | ssl | none
+        'username'   => 'smtp-user',
+        'password'   => 'YOUR_SMTP_PASSWORD',
+        'from_email' => 'alerts@example.com', // опционально
+        'from_name'  => 'Notifications', // опционально
+        'reply_to'   => '', // опционально
+        'timeout'    => 15,
+    ],
+
     'rules' => [
         // Универсальное правило: без senders — любой клиент (Directus, ручной curl без ?sender)
         'main' => [
@@ -119,6 +137,15 @@ return [
             'channels'   => ['web'],
             'recipients' => [
                 'web' => ['ivan'],
+            ],
+            'schedule'   => [],
+        ],
+        // Email через внешний SMTP
+        'email_alerts' => [
+            'enabled'    => true,
+            'channels'   => ['email'],
+            'recipients' => [
+                'email' => ['alerts@example.com'],
             ],
             'schedule'   => [],
         ],

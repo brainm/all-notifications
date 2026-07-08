@@ -139,6 +139,14 @@ function sendQueuedNotification(array $row, array $config, PDO $pdo): array {
         $result = deliverWebNotification($pdo, $config, $userId, $row['rule_name'], $text, $payload_json);
         return ['success' => $result['success'], 'error' => $result['push']['error'] ?? ''];
     }
+    if ($channel === 'email') {
+        $email_config = $config['email_config'] ?? null;
+        if (!is_array($email_config)) {
+            return ['success' => false, 'error' => 'email_config missing in config.php'];
+        }
+        $subject = resolveEmailSubjectFromPayload($payload_json, (string) $row['rule_name']);
+        return sendToEmail($email_config, $recipient, $subject, $text);
+    }
 
     return ['success' => false, 'error' => "Unknown channel '{$channel}'"];
 }

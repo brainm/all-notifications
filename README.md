@@ -1,6 +1,6 @@
 # all-notifications
 
-PHP-шлюз для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK**, **Matrix** и **Web** (inbox + browser push) по настраиваемым правилам.
+PHP-шлюз для приёма вебхуков и рассылки уведомлений в **Telegram**, **VK**, **Matrix**, **Email** и **Web** (inbox + browser push) по настраиваемым правилам.
 
 Проект не привязан к фреймворку: PHP 8+, cURL, PDO (MySQL/MariaDB), Node.js для сборки фронтенда.
 
@@ -101,6 +101,7 @@ URL шлюза: `https://ваш-домен/.../send.php` (относительн
 | `telegram_config` | `bot_token`, `proxies[]`, `timeout`. |
 | `vk_config` | `access_token`, `api_version`, `proxies[]`, `timeout`. |
 | `matrix_config` | `homeserver_url`, `access_token`, `proxies[]`, `timeout`. |
+| `email_config` | `host` (обяз.), `port`, `encryption`, `username`, `password`, `from_email`, `from_name` (опц.), `timeout`. |
 | `rules` | Массив правил доставки (см. ниже). |
 
 ### Правило (`rules`)
@@ -126,6 +127,8 @@ URL шлюза: `https://ваш-домен/.../send.php` (относительн
 - Пустой `schedule` или `schedule: []` — доставка в любое время.
 - `senders` отсутствует или `[]` — правило для любого запроса (в т.ч. без `?sender`).
 - `enabled: false` — правило не обрабатывается; записи в очереди для него ждут включения или истекают через 7 дней.
+
+Канал **`email`** — получатели в `recipients.email` — **адреса** `user@example.com`. Тема: `?subject=`, JSON `subject` / `title`, иначе имя правила. Нужен `composer install` (PHPMailer).
 
 Канал **`web`** — получатели в `recipients.web` указываются **login** (локальная часть email) или **числовой id** пользователя из `admin.php`:
 
@@ -188,7 +191,7 @@ URL шлюза: `https://ваш-домен/.../send.php` (относительн
 
 ```sql
 ALTER TABLE notification_queue
-    MODIFY channel ENUM('telegram', 'vk', 'matrix', 'web') NOT NULL;
+    MODIFY channel ENUM('telegram', 'vk', 'matrix', 'web', 'email') NOT NULL;
 ALTER TABLE notification_queue
     ADD COLUMN payload_json MEDIUMTEXT DEFAULT NULL AFTER telegram_parse_mode;
 ```
@@ -200,7 +203,8 @@ ALTER TABLE notification_queue
 ### Универсальный режим (без `?sender`)
 
 - JSON: `{ "message": "..." }` или `text` / `body`
-- JSON с разными текстами: `{ "telegram": "...", "vk": "...", "matrix": "..." }`
+- JSON с разными текстами: `{ "telegram": "...", "vk": "...", "matrix": "...", "email": "..." }`
+- `subject` / `title` в JSON или `?subject=` — тема письма для канала email
 - `parse_mode` / `telegram_parse_mode` — только для Telegram
 - `text/plain` — всё тело как сообщение
 - `application/x-www-form-urlencoded` — поле `message` или `text`

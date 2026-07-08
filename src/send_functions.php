@@ -295,7 +295,7 @@ function buildChannelMessages(array $data, string $raw_input): array {
         $default = is_string($data['raw_text']) ? $data['raw_text'] : '';
     } elseif ($data !== []) {
         $copy = $data;
-        foreach (['telegram', 'vk', 'matrix', 'web', 'parse_mode', 'telegram_parse_mode'] as $k) {
+        foreach (['telegram', 'vk', 'matrix', 'web', 'email', 'parse_mode', 'telegram_parse_mode', 'subject', 'title'] as $k) {
             unset($copy[$k]);
         }
         if ($copy !== []) {
@@ -314,8 +314,9 @@ function buildChannelMessages(array $data, string $raw_input): array {
     $mx = (!empty($data['matrix']) && is_string($data['matrix'])) ? truncateMessageUniversal($data['matrix']) : $default;
 
     $web = (!empty($data['web']) && is_string($data['web'])) ? truncateMessageUniversal($data['web']) : $default;
+    $email = (!empty($data['email']) && is_string($data['email'])) ? truncateMessageUniversal($data['email']) : $default;
 
-    return ['telegram' => $tg, 'vk' => $vk, 'matrix' => $mx, 'web' => $web];
+    return ['telegram' => $tg, 'vk' => $vk, 'matrix' => $mx, 'web' => $web, 'email' => $email];
 }
 
 /**
@@ -339,6 +340,12 @@ function messageTextForChannel(string $channel, array $channelMessages): string 
             return $channelMessages['web'];
         }
         return $channelMessages['vk'] ?? $channelMessages['telegram'] ?? $channelMessages['matrix'] ?? '';
+    }
+    if ($channel === 'email') {
+        if (!empty($channelMessages['email']) && is_string($channelMessages['email'])) {
+            return $channelMessages['email'];
+        }
+        return $channelMessages['web'] ?? $channelMessages['vk'] ?? $channelMessages['telegram'] ?? $channelMessages['matrix'] ?? '';
     }
     return '';
 }
@@ -569,4 +576,134 @@ function sendToMatrix(array $config, string $room_id, string $text): array {
         return ['success' => false, 'error' => "Invalid Matrix response: $response"];
     }
     return ['success' => true, 'error' => ''];
+}
+
+function sanitizeEmailSubject(string $subject): string {
+    $subject = trim(str_replace(["\r", "\n"], ' ', $subject));
+    if ($subject === '') {
+        return 'Notification';
+    }
+    if (mb_strlen($subject) > 200) {
+        return mb_substr($subject, 0, 200);
+    }
+    return $subject;
+}
+
+/**
+ * Тема письма: GET subject → JSON subject → JSON title → имя правила.
+ */
+function resolveEmailSubject(array $data, string $rule_name, ?string $get_subject = null): string {
+    if ($get_subject !== null && trim($get_subject) !== '') {
+        return sanitizeEmailSubject($get_subject);
+    }
+    if (!empty($data['subject']) && is_string($data['subject'])) {
+        return sanitizeEmailSubject($data['subject']);
+    }
+    if (!empty($data['title']) && is_string($data['title'])) {
+        return sanitizeEmailSubject($data['title']);
+    }
+    return sanitizeEmailSubject($rule_name);
+}
+
+function resolveEmailSubjectFromPayload(?string $payload_json, string $rule_name, ?string $get_subject = null): string {
+    if ($get_subject !== null && trim($get_subject) !== '') {
+        return sanitizeEmailSubject($get_subject);
+    }
+    if ($payload_json !== null && $payload_json !== '') {
+        $data = json_decode($payload_json, true);
+        if (is_array($data)) {
+            return resolveEmailSubject($data, $rule_name);
+        }
+    }
+    return sanitizeEmailSubject($rule_name);
+}
+
+function isValidEmailRecipient(string $email): bool {
+    return filter_var(trim($email), FILTER_VALIDATE_EMAIL) !== false;
+}
+
+function resolveEmailFromAddress(array $config): string {
+    $from = trim((string) ($config['from_email'] ?? $config['from'] ?? ''));
+    if ($from !== '' && isValidEmailRecipient($from)) {
+        return $from;
+    }
+    $username = trim((string) ($config['username'] ?? ''));
+    if ($username !== '' && isValidEmailRecipient($username)) {
+        return $username;
+    }
+    $host = trim((string) ($config['host'] ?? ''));
+    if ($host !== '') {
+        $domain = preg_replace('/^smtp\./i', '', $host);
+        if (str_contains($domain, '.')) {
+            return 'noreply@' . $domain;
+        }
+    }
+    return 'noreply@localhost';
+}
+
+function requireComposerAutoload(): bool {
+    static $loaded = false;
+    if ($loaded) {
+        return true;
+    }
+    foreach ([__DIR__ . '/vendor/autoload.php', dirname(__DIR__) . '/vendor/autoload.php'] as $path) {
+        if (is_readable($path)) {
+            require_once $path;
+            $loaded = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+function sendToEmail(array $config, string $to, string $subject, string $text): array {
+    if (!isValidEmailRecipient($to)) {
+        return ['success' => false, 'error' => "Invalid email address: $to"];
+    }
+    if (!requireComposerAutoload()) {
+        return ['success' => false, 'error' => 'Composer vendor not installed (phpmailer/phpmailer)'];
+    }
+
+    $host = trim((string) ($config['host'] ?? ''));
+    if ($host === '') {
+        return ['success' => false, 'error' => 'email_config: host is required'];
+    }
+    $from = resolveEmailFromAddress($config);
+
+    try {
+        $mail = new PHPMailer\PHPMailer\PHPMailer(true);
+        $mail->isSMTP();
+        $mail->Host = $host;
+        $mail->Port = (int) ($config['port'] ?? 587);
+        $encryption = strtolower(trim((string) ($config['encryption'] ?? 'tls')));
+        if ($encryption === 'ssl') {
+            $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+        } elseif ($encryption === 'tls') {
+            $mail->SMTPSecure = PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        } else {
+            $mail->SMTPAutoTLS = false;
+            $mail->SMTPSecure = false;
+        }
+        $username = trim((string) ($config['username'] ?? ''));
+        if ($username !== '') {
+            $mail->SMTPAuth = true;
+            $mail->Username = $username;
+            $mail->Password = (string) ($config['password'] ?? '');
+        }
+        $mail->CharSet = 'UTF-8';
+        $mail->Timeout = (int) ($config['timeout'] ?? 15);
+        $fromName = trim((string) ($config['from_name'] ?? ''));
+        $mail->setFrom($from, $fromName);
+        if (!empty($config['reply_to']) && is_string($config['reply_to'])) {
+            $mail->addReplyTo($config['reply_to']);
+        }
+        $mail->addAddress(trim($to));
+        $mail->Subject = sanitizeEmailSubject($subject);
+        $mail->Body = $text;
+        $mail->isHTML(false);
+        $mail->send();
+        return ['success' => true, 'error' => ''];
+    } catch (Throwable $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
 }

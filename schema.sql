@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS web_notifications (
 CREATE TABLE IF NOT EXISTS notification_queue (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     rule_name VARCHAR(128) NOT NULL,
-    channel ENUM('telegram', 'vk', 'matrix', 'web') NOT NULL,
+    channel ENUM('telegram', 'vk', 'matrix', 'web', 'email') NOT NULL,
     recipient VARCHAR(255) NOT NULL,
     message_text MEDIUMTEXT NOT NULL,
     telegram_parse_mode VARCHAR(32) DEFAULT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS notification_queue (
 
 -- Миграция существующей установки (выполнить вручную при необходимости):
 -- ALTER TABLE notification_queue
---     MODIFY channel ENUM('telegram', 'vk', 'matrix', 'web') NOT NULL;
+--     MODIFY channel ENUM('telegram', 'vk', 'matrix', 'web', 'email') NOT NULL;
 -- ALTER TABLE notification_queue
 --     ADD COLUMN payload_json MEDIUMTEXT DEFAULT NULL AFTER telegram_parse_mode;
 --

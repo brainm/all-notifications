@@ -1,13 +1,13 @@
 <?php
 /**
  * =============================================================================
- * Универсальный диспетчер уведомлений (POST) → Telegram / VK / Matrix
+ * Универсальный диспетчер уведомлений (POST) → Telegram / VK / Matrix / Email / Web
  * Версия: 1.0 (на базе kuma-notifications.php)
  *
  * Принимает POST с телом в общем виде (без GET sender — универсальный режим):
  * - JSON: { "message": "..." } — одно сообщение во все каналы из правил
  *   или { "text": "..." } / { "body": "..." } (алиасы)
- * - JSON: { "telegram": "...", "vk": "...", "matrix": "..." } — разный текст по каналам
+ * - JSON: { "telegram": "...", "vk": "...", "matrix": "...", "email": "..." } — разный текст по каналам
  *   (неуказанный канал берёт значение из message|text|body или JSON целиком; matrix по умолчанию как vk)
  * - Опционально: "parse_mode" или "telegram_parse_mode" (например MarkdownV2)
  *   передаётся в Telegram sendMessage, если задано
@@ -19,7 +19,7 @@
  * текст для Telegram, VK и Matrix одинаковый, без parse_mode из тела (обычный текст / Kuma с эмодзи).
  *
  * GET-параметры (как в Kuma-шлюзе):
- * - chat_id, user_id, room_id — подставляются, если в правиле пустые получатели (telegram / vk / matrix)
+ * - chat_id, user_id, room_id, email — подставляются, если в правиле пустые получатели
  * - sender — опционально: grafana | kuma | market | market/notification (нижний регистр). Пусто или отсутствует — «общий» клиент
  *   market и market/notification — вебхук Яндекс Маркета (POST /notification): php://input в каналы одним куском без разбора,
  *   ответ всегда JSON Response { version, name, time } (см. Partner API push sendNotification).
@@ -70,6 +70,7 @@ $log_file = $config['log_file'];
 $telegram_config = $config['telegram_config'];
 $vk_config = $config['vk_config'];
 $matrix_config = $config['matrix_config'];
+$email_config = $config['email_config'] ?? null;
 $rules = $config['rules'];
 
 require __DIR__ . '/send_functions.php';
@@ -109,26 +110,30 @@ if ($request_sender !== '') {
 }
 
 $telegram_parse_mode = null;
+$payload_data_for_subject = [];
 if (isMarketNotificationSender($request_sender)) {
     $bodyText = $raw_input;
     if ($bodyText !== '') {
         $bodyText = truncateMessageUniversal($bodyText);
     }
-    $channelMessages = ['telegram' => $bodyText, 'vk' => $bodyText, 'matrix' => $bodyText, 'web' => $bodyText];
+    $channelMessages = ['telegram' => $bodyText, 'vk' => $bodyText, 'matrix' => $bodyText, 'web' => $bodyText, 'email' => $bodyText];
 } elseif ($request_sender === 'grafana') {
     $legacy = decodeLegacyJsonPayload($raw_input);
     $legacy = removeBackslashes($legacy);
+    $payload_data_for_subject = $legacy;
     $formatted = formatGrafanaMessage($legacy);
-    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted];
+    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted, 'email' => $formatted];
 } elseif ($request_sender === 'kuma') {
     $legacy = decodeLegacyJsonPayload($raw_input);
     $legacy = removeBackslashes($legacy);
+    $payload_data_for_subject = $legacy;
     $formatted = formatKumaMessage($legacy);
-    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted];
+    $channelMessages = ['telegram' => $formatted, 'vk' => $formatted, 'matrix' => $formatted, 'web' => $formatted, 'email' => $formatted];
 } else {
     $contentType = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
     $data = parseIncomingPayload($raw_input, $contentType);
     $data = removeBackslashes($data);
+    $payload_data_for_subject = $data;
     $channelMessages = buildChannelMessages($data, $raw_input);
     if (!empty($data['telegram_parse_mode']) && is_string($data['telegram_parse_mode'])) {
         $telegram_parse_mode = $data['telegram_parse_mode'];
@@ -141,6 +146,12 @@ logMessage('Resolved telegram message length: ' . mb_strlen($channelMessages['te
 logMessage('Resolved vk message length: ' . mb_strlen($channelMessages['vk']));
 logMessage('Resolved matrix message length: ' . mb_strlen($channelMessages['matrix'] ?? ''));
 logMessage('Resolved web message length: ' . mb_strlen($channelMessages['web'] ?? ''));
+logMessage('Resolved email message length: ' . mb_strlen($channelMessages['email'] ?? ''));
+
+$get_subject = isset($_GET['subject']) ? trim((string) $_GET['subject']) : null;
+if ($get_subject === '') {
+    $get_subject = null;
+}
 
 $web_payload_json = null;
 if ($raw_input !== '') {
@@ -150,11 +161,13 @@ if ($raw_input !== '') {
 $get_chat_id = isset($_GET['chat_id']) ? trim($_GET['chat_id']) : null;
 $get_user_id = isset($_GET['user_id']) ? trim($_GET['user_id']) : null;
 $get_room_id = isset($_GET['room_id']) ? trim($_GET['room_id']) : null;
+$get_email = isset($_GET['email']) ? trim($_GET['email']) : null;
 
 $default_recipients = [
     'telegram' => $get_chat_id ? [$get_chat_id] : [],
     'vk'       => $get_user_id ? [$get_user_id] : [],
     'matrix'   => $get_room_id ? [$get_room_id] : [],
+    'email'    => $get_email ? [$get_email] : [],
 ];
 
 $now = new DateTime();
@@ -259,6 +272,17 @@ foreach ($rules as $rule_name => $rule) {
                 $pushInfo = $pushOk ? 'push OK' : ('push FAIL: ' . ($result['push']['error'] ?? 'unknown'));
                 logMessage("Web to user $userId ($recipient): inbox #{$result['notification_id']}, $pushInfo");
                 $sent_any = true;
+            } elseif ($channel === 'email') {
+                if (!is_array($email_config)) {
+                    logMessage("Email channel in rule '$rule_name' but email_config missing in config.php, skipped.");
+                    continue;
+                }
+                $subject = resolveEmailSubject($payload_data_for_subject, $rule_name, $get_subject);
+                $result = sendToEmail($email_config, (string) $recipient, $subject, $text);
+                logMessage("Email to $recipient: " . ($result['success'] ? "OK" : "FAIL - " . $result['error']));
+                if ($result['success']) {
+                    $sent_any = true;
+                }
             } else {
                 logMessage("Unknown channel '$channel' in rule '$rule_name'");
             }
