@@ -71,7 +71,8 @@ if ($action === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         apiJsonError(401, 'unauthorized');
     }
     $_SESSION['user_id'] = (int) $user['id'];
-    touchUserSession($config);
+    issueUserRememberToken($pdo, $config, (int) $user['id']);
+    touchUserSession($config, $pdo);
     echo json_encode([
         'success' => true,
         'role'    => 'user',
@@ -216,9 +217,18 @@ if (str_starts_with($action, 'admin_')) {
 }
 
 startUserSession($config);
+restoreUserSessionFromRemember($pdo, $config);
 $userId = currentUserId();
 if ($userId !== null) {
-    touchUserSession($config);
+    touchUserSession($config, $pdo);
+}
+
+if ($action === 'session_ping' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    if ($userId === null) {
+        apiJsonError(401, 'unauthorized');
+    }
+    echo json_encode(['ok' => true], JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
 if ($action === 'me' && $_SERVER['REQUEST_METHOD'] === 'GET') {

@@ -11,6 +11,7 @@ try {
 }
 
 startUserSession($config);
+restoreUserSessionFromRemember($pdo, $config);
 
 if (currentUserId() !== null) {
     header('Location: dashboard.php');

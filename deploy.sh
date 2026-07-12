@@ -76,7 +76,7 @@ run_ssh() {
   fi
 }
 
-echo "🔧 Права на .env и cron.sh..."
-run_ssh "if [ -f '${REMOTE_DIR}/.env' ]; then chown '${REMOTE_WEB_USER}:${REMOTE_WEB_USER}' '${REMOTE_DIR}/.env' && chmod 640 '${REMOTE_DIR}/.env'; fi && chmod +x '${REMOTE_DIR}/cron.sh'"
+echo "🔧 Права на .env, cron.sh и каталог сессий..."
+run_ssh "mkdir -p '${REMOTE_DIR}/var/sessions' && chown -R '${REMOTE_WEB_USER}:${REMOTE_WEB_USER}' '${REMOTE_DIR}/var/sessions' && chmod 700 '${REMOTE_DIR}/var/sessions' && if [ -f '${REMOTE_DIR}/.env' ]; then chown '${REMOTE_WEB_USER}:${REMOTE_WEB_USER}' '${REMOTE_DIR}/.env' && chmod 640 '${REMOTE_DIR}/.env'; fi && chmod +x '${REMOTE_DIR}/cron.sh'"
 
 echo "🎉 Деплой завершён: ${REMOTE}:${REMOTE_DIR}"

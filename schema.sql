@@ -19,6 +19,19 @@ CREATE TABLE IF NOT EXISTS users (
     KEY idx_users_active (enabled, deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS user_remember_tokens (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id INT UNSIGNED NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    user_agent VARCHAR(512) DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_remember_token_hash (token_hash),
+    KEY idx_remember_user_expires (user_id, expires_at),
+    CONSTRAINT fk_remember_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS web_push_subscriptions (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     user_id INT UNSIGNED NOT NULL,
@@ -76,3 +89,17 @@ CREATE TABLE IF NOT EXISTS notification_queue (
 -- ALTER TABLE users ADD COLUMN registration_token CHAR(64) DEFAULT NULL AFTER password_hash;
 -- ALTER TABLE users ADD COLUMN registration_token_expires_at DATETIME DEFAULT NULL AFTER registration_token;
 -- ALTER TABLE users ADD UNIQUE KEY uk_users_registration_token (registration_token);
+--
+-- Долгоживущий вход для PWA (iOS):
+-- CREATE TABLE IF NOT EXISTS user_remember_tokens (
+--     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+--     user_id INT UNSIGNED NOT NULL,
+--     token_hash CHAR(64) NOT NULL,
+--     expires_at DATETIME NOT NULL,
+--     user_agent VARCHAR(512) DEFAULT NULL,
+--     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--     PRIMARY KEY (id),
+--     UNIQUE KEY uk_remember_token_hash (token_hash),
+--     KEY idx_remember_user_expires (user_id, expires_at),
+--     CONSTRAINT fk_remember_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+-- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

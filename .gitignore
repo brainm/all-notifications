@@ -3,3 +3,4 @@ src/config.php
 /vendor/
 /node_modules/
 /dist/
+/src/var/sessions/

@@ -196,6 +196,16 @@ ALTER TABLE notification_queue
     ADD COLUMN payload_json MEDIUMTEXT DEFAULT NULL AFTER telegram_parse_mode;
 ```
 
+**Сессия PWA (iOS):** после обновления выполните миграцию `user_remember_tokens` (см. `schema.sql`) и **один раз перелогиньтесь** с iPhone — выдаётся cookie `notifications_remember` на 90 дней. При потере PHP-сессии на сервере вход восстанавливается автоматически.
+
+Если в `php.ini` было `session.gc_maxlifetime = 1440` (24 мин), файлы сессий удалялись раньше cookie — типичная причина «вылетает через час». Приложение переопределяет это на 90 дней и хранит сессии в `var/sessions/` (отдельно от общего каталога PHP). Опционально в php.ini или `.user.ini` в `dist/`:
+
+```ini
+session.gc_maxlifetime = 7776000
+```
+
+(7776000 = 90 суток в секундах.)
+
 ## `send.php`: форматы запроса
 
 Только **POST**.

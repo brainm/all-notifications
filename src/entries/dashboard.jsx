@@ -196,6 +196,7 @@ function DashboardApp({ initial }) {
     (reason) => {
       checkOpenIntent(reason);
       if (online && !offlineMode) {
+        apiGet("session_ping").catch(() => {});
         reloadRef.current?.({ silent: true });
       }
       if (reason === "idle-resume") {
