@@ -39,8 +39,13 @@
  * Тема: GET subject=, JSON "subject" или "title", иначе имя правила. Текст — как у остальных каналов (ключ email в JSON).
  * Опционально GET email= если в правиле пустые recipients.email.
  *
+ * --- VK message_read (vk-callback.php) ---
+ * События приходят не напрямую от VK, а от vk-beehive-bot (прокси).
+ * В .env: VK_CALLBACK_TOKEN — тот же, что ALL_NOTIFICATIONS_TOKEN у бота.
+ * Auth: заголовок X-Authorization.
+ *
  * --- Admin / Web Push (.env) ---
- * ADMIN_LOGIN, ADMIN_PASSWORD, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY
+ * ADMIN_LOGIN, ADMIN_PASSWORD, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY, VK_CALLBACK_TOKEN
  * в dist/.env (создаётся при сборке из корневого .env).
  */
 return [
@@ -84,6 +89,7 @@ return [
             // 'http://127.0.0.1:8080',
         ],
         'timeout'      => 5,
+        // callback_token подставляется из .env (VK_CALLBACK_TOKEN)
     ],
 
     'matrix_config' => [

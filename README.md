@@ -24,6 +24,7 @@ all-notifications/
 | Путь | Назначение |
 |------|------------|
 | `src/send.php` | HTTP-шлюз: приём POST, разбор тела, применение правил, немедленная отправка или постановка в очередь. |
+| `src/vk-callback.php` | Приём `message_read` от vk-beehive-bot (`X-Authorization`) → лог. |
 | `src/send_functions.php` | Вспомогательные функции отправки и форматирования. |
 | `src/queue.php` | Очередь в БД: постановка, доставка, очистка. |
 | `src/cron.php` / `src/cron.sh` | CLI-воркер очереди. |
@@ -99,7 +100,7 @@ URL шлюза: `https://ваш-домен/.../send.php` (относительн
 | `web_push_config` | `app_base_url`, `app_base_path`, `vapid.subject`. |
 | `dist/.env` | `ADMIN_*`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` (создаётся при сборке). |
 | `telegram_config` | `bot_token`, `proxies[]`, `timeout`. |
-| `vk_config` | `access_token`, `api_version`, `proxies[]`, `timeout`. |
+| `vk_config` | `access_token`, `api_version`, `proxies[]`, `timeout`; `callback_token` из `.env` (`VK_CALLBACK_TOKEN`). |
 | `matrix_config` | `homeserver_url`, `access_token`, `proxies[]`, `timeout`. |
 | `email_config` | `host` (обяз.), `port`, `encryption`, `username`, `password`, `from_email`, `from_name` (опц.), `timeout`. |
 | `rules` | Массив правил доставки (см. ниже). |
@@ -129,6 +130,16 @@ URL шлюза: `https://ваш-домен/.../send.php` (относительн
 - `enabled: false` — правило не обрабатывается; записи в очереди для него ждут включения или истекают через 7 дней.
 
 Канал **`email`** — получатели в `recipients.email` — **адреса** `user@example.com`. Тема: `?subject=`, JSON `subject` / `title`, иначе имя правила. Нужен `composer install` (PHPMailer).
+
+### VK `message_read` (через vk-beehive-bot)
+
+Callback API сообщества указывает на `vk-beehive-bot/hook.php`. При `message_read` бот проксирует событие на `…/notifications/vk-callback.php`.
+
+1. В `.env` all-notifications: `VK_CALLBACK_TOKEN=…` (тот же, что `ALL_NOTIFICATIONS_TOKEN` у бота).
+2. В `.env` бота: `ALL_NOTIFICATIONS_ENABLED=true`, `ALL_NOTIFICATIONS_TOKEN=…`, `ALL_NOTIFICATIONS_VK_CALLBACK_URL=https://…/vk-callback.php`.
+3. В сообществе VK включите событие **«Прочтение сообщений»**.
+
+В `log_file` — сводка и полный JSON события.
 
 Канал **`web`** — получатели в `recipients.web` указываются **login** (локальная часть email) или **числовой id** пользователя из `admin.php`:
 

@@ -64,6 +64,9 @@ const lines = [
 if (vars.APP_DEBUG) {
   lines.push(`APP_DEBUG=${quoteEnv(vars.APP_DEBUG)}`);
 }
+if (vars.VK_CALLBACK_TOKEN) {
+  lines.push(`VK_CALLBACK_TOKEN=${quoteEnv(vars.VK_CALLBACK_TOKEN)}`);
+}
 const content = lines.join("\n") + "\n";
 writeFileSync(resolve(distDir, ".env"), content, { mode: 0o644 });
 console.log("write-dist-env: dist/.env создан");

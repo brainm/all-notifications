@@ -515,6 +515,79 @@ function sendToVk(array $config, string $user_id, string $text): array {
 }
 
 /**
+ * Найти правила, где recipients.vk содержит peer_id / from_id (как строку или число).
+ *
+ * @return list<string>
+ */
+function findVkRulesMatchingPeer(array $rules, int $peerId, int $fromId): array {
+    $needles = array_unique(array_filter([
+        (string) $peerId,
+        (string) $fromId,
+        $peerId !== 0 ? (string) abs($peerId) : '',
+        $fromId !== 0 ? (string) abs($fromId) : '',
+    ], static fn($v) => $v !== ''));
+
+    $matched = [];
+    foreach ($rules as $ruleName => $rule) {
+        if (!is_array($rule)) {
+            continue;
+        }
+        $recipients = $rule['recipients']['vk'] ?? [];
+        if (!is_array($recipients) || $recipients === []) {
+            continue;
+        }
+        foreach ($recipients as $recipient) {
+            $id = is_int($recipient) || is_float($recipient)
+                ? (string) (int) $recipient
+                : trim((string) $recipient);
+            if ($id === '') {
+                continue;
+            }
+            if (in_array($id, $needles, true)) {
+                $matched[] = (string) $ruleName;
+                break;
+            }
+        }
+    }
+    return $matched;
+}
+
+/**
+ * Логирует Callback API message_read (прочтение ЛС сообщества ↔ участник).
+ */
+function handleVkMessageReadEvent(array $data, array $rules): void {
+    $object = $data['object'] ?? [];
+    if (!is_array($object)) {
+        $object = [];
+    }
+
+    $peerId = (int) ($object['peer_id'] ?? 0);
+    $fromId = (int) ($object['from_id'] ?? 0);
+    $readMessageId = (int) ($object['read_message_id'] ?? 0);
+    $conversationMessageId = $object['conversation_message_id'] ?? null;
+    $groupId = $data['group_id'] ?? null;
+    $eventId = $data['event_id'] ?? null;
+    $apiV = $data['v'] ?? null;
+
+    $matchedRules = findVkRulesMatchingPeer($rules, $peerId, $fromId);
+    $rulesLabel = $matchedRules === [] ? '(no matching rules recipients.vk)' : implode(', ', $matchedRules);
+
+    $summary = sprintf(
+        'VK message_read: peer_id=%d from_id=%d read_message_id=%d conversation_message_id=%s group_id=%s event_id=%s v=%s rules=[%s]',
+        $peerId,
+        $fromId,
+        $readMessageId,
+        $conversationMessageId === null || $conversationMessageId === '' ? '?' : (string) $conversationMessageId,
+        $groupId === null || $groupId === '' ? '?' : (string) $groupId,
+        $eventId === null || $eventId === '' ? '?' : (string) $eventId,
+        $apiV === null || $apiV === '' ? '?' : (string) $apiV,
+        $rulesLabel
+    );
+    logMessage($summary);
+    logMessage('VK message_read full JSON: ' . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+/**
  * Отправка в Matrix (Client-Server API): m.room.message в room_id.
  * room_id — полный идентификатор комнаты (!xxx:server).
  */

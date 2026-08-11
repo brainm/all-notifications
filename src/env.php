@@ -68,5 +68,13 @@ function applyEnvConfig(array $config, string $envPath): array {
     $config['web_push_config']['vapid']['publicKey'] = $publicKey;
     $config['web_push_config']['vapid']['privateKey'] = $privateKey;
 
+    if (!isset($config['vk_config']) || !is_array($config['vk_config'])) {
+        $config['vk_config'] = [];
+    }
+    $callbackToken = trim($env['VK_CALLBACK_TOKEN'] ?? '');
+    if ($callbackToken !== '') {
+        $config['vk_config']['callback_token'] = $callbackToken;
+    }
+
     return $config;
 }
